@@ -65,79 +65,6 @@ export default function Home() {
     }
   }, [chatHistory]);
 
-  const sendMessage = async (userText: string) => {
-    if (!userText.trim()) return;
-
-    setAiStatus("جاري معالجة طلبك بذكاء العاصمة...");
-
-    // تحديث المحادثة محلياً
-    const updatedHistory = [...chatHistory, { sender: "user" as const, text: userText }];
-    setChatHistory(updatedHistory);
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userSpeech: userText, history: chatHistory }),
-      });
-
-      const contentType = res.headers.get("Content-Type") || "";
-      const replyHeader = res.headers.get("X-Ai-Reply-Text");
-      const replyText = replyHeader ? decodeURIComponent(replyHeader) : "تكرم عينك!";
-
-      // إدراج رد المساعد في السجل
-      setChatHistory([...updatedHistory, { sender: "bot", text: replyText }]);
-
-      if (contentType.includes("audio/mpeg")) {
-        const blob = await res.blob();
-        const audioUrl = URL.createObjectURL(blob);
-
-        if (audioRef.current) {
-          audioRef.current.pause();
-        }
-
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
-
-        setAiStatus("الكاشير يتحدث الآن...");
-        audio.onended = () => {
-          setAiStatus("عم أسمعك.. تفضل احكي");
-          if (recognitionRef.current && isCallingRef.current) {
-            try {
-              recognitionRef.current.start();
-            } catch (e) {}
-          }
-        };
-
-        await audio.play();
-      } else {
-        setAiStatus("عم أسمعك.. تفضل احكي");
-      }
-    } catch (err) {
-      console.error(err);
-      setAiStatus("حدث خطأ بالاتصال...");
-    }
-  };
-
-   const startCall = async () => {
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      alert("يرجى إعطاء إذن الميكروفون للمتصفح.");
-      return;
-    }
-
-    isCallingRef.current = true;
-    setCallState("connecting");
-    setChatHistory([]);
-
-    setTimeout(async () => {
-      setCallState("active");
-      // طلب واستلام صوت الترحيب الأولي فوراً من السيرفر
-      await sendGreetingCall();
-    }, 800);
-  };
-
   const sendGreetingCall = async () => {
     setAiStatus("جاري الاتصال بالكاشير...");
     try {
@@ -179,16 +106,70 @@ export default function Home() {
     }
   };
 
-      // تشغيل الترحيب الأولي محلياً
-      const welcomeText = "أهلاً وسهلاً بك بمأكولات العاصمة! معك الكاشير الرقمي، تفضل شو بتحب تطلب اليوم؟";
-      setChatHistory([{ sender: "bot", text: welcomeText }]);
+  const sendMessage = async (userText: string) => {
+    if (!userText.trim()) return;
 
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {}
+    setAiStatus("جاري معالجة طلبك بذكاء العاصمة...");
+
+    const updatedHistory = [...chatHistory, { sender: "user" as const, text: userText }];
+    setChatHistory(updatedHistory);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userSpeech: userText, history: chatHistory }),
+      });
+
+      const contentType = res.headers.get("Content-Type") || "";
+      const replyHeader = res.headers.get("X-Ai-Reply-Text");
+      const replyText = replyHeader ? decodeURIComponent(replyHeader) : "تكرم عينك!";
+
+      setChatHistory([...updatedHistory, { sender: "bot", text: replyText }]);
+
+      if (contentType.includes("audio/mpeg")) {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+
+        if (audioRef.current) audioRef.current.pause();
+
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        setAiStatus("الكاشير يتحدث الآن...");
+        audio.onended = () => {
+          setAiStatus("عم أسمعك.. تفضل احكي");
+          if (recognitionRef.current && isCallingRef.current) {
+            try { recognitionRef.current.start(); } catch (e) {}
+          }
+        };
+
+        await audio.play();
+      } else {
+        setAiStatus("عم أسمعك.. تفضل احكي");
       }
-    }, 1000);
+    } catch (err) {
+      console.error(err);
+      setAiStatus("حدث خطأ بالاتصال...");
+    }
+  };
+
+  const startCall = async () => {
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert("يرجى إعطاء إذن الميكروفون للمتصفح.");
+      return;
+    }
+
+    isCallingRef.current = true;
+    setCallState("connecting");
+    setChatHistory([]);
+
+    setTimeout(async () => {
+      setCallState("active");
+      await sendGreetingCall();
+    }, 800);
   };
 
   const endCall = () => {
@@ -271,7 +252,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* حقل الإدخال النصي أثناء المكالمة */}
         {callState === "active" && (
           <div className="w-full mt-4 flex gap-2">
             <input
@@ -291,7 +271,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* عرض النص الملتقط والسجل */}
         {callState === "active" && transcript && (
           <div className="w-full bg-[#1A1A1A] border border-[#D4AF37]/30 p-3 rounded-2xl text-xs text-gray-200 animate-fade-in max-h-24 overflow-y-auto">
             <span className="text-[#D4AF37] font-bold block mb-1">وصلنا منك:</span>
