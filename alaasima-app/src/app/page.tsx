@@ -1,61 +1,73 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Phone, MapPin, Mic, Send, Bot, User, ShoppingBag, CheckCircle } from "lucide-react";
-import { MENU_DATA, MenuItem } from "@/data/menu";
-
-interface Message {
-  id: string;
-  sender: "bot" | "user";
-  text: string;
-  time: string;
-  orderSummary?: { items: { item: MenuItem; qty: number }[]; total: number };
-}
+import { Phone, PhoneOff, Mic, MicOff, Sparkles, ShoppingBag, Volume2 } from "lucide-react";
+import { MENU_DATA } from "@/data/menu";
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      sender: "bot",
-      text: "أهلاً بك في مأكولات العاصمة! 🌯 يمكنك الطلب بالصوت أو الكتابة (مثلاً: 2 وجبة شاورما عربي ومشروب كينزا). شو حابب تطلب اليوم؟",
-      time: "الآن",
-    },
-  ]);
-  const [inputText, setInputText] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
+  const [callState, setCallState] = useState<"idle" | "connecting" | "active">("idle");
+  const [isMuted, setIsMuted] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
+  const [transcript, setTranscript] = useState<string>("");
+  const [aiStatus, setAiStatus] = useState<string>("");
+  const [lastOrderSummary, setLastOrderSummary] = useState<any>(null);
+
   const recognitionRef = useRef<any>(null);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
 
+  // تعليمات الكاشير الرقمي الموجهة لـ Gemini
+  const systemPrompt = `
+أنت "كاشير رقمي" ودود ولطيف لمطعم "مأكولات العاصمة" في سيدي مقداد - ريف دمشق.
+تتحدث فقط باللهجة الشامية العفوية والمهذبة (مثل: "أهلاً وسهلاً أخي"، "تكرم عينك"، "شو بتحب تطلب اليوم؟").
+
+قائمة الطعام والأسعار المتوفرة لديك:
+${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.description || ""})`).join("\n")}
+
+مناطق التوصيل: يلدا، ببيلا، سيدي مقداد، جرمانا.
+
+مهامك أثناء المكالمة:
+1. الترحيب بالزبون وأخذ طلبه.
+2. اقتراح إضافة سرافيس أو مشروبات (مثل ثوم، مخلل، كينزا).
+3. تأكيد الطلب والسعر الإجمالي وحساب منطقة التوصيل.
+4. الإجابة باختصار شديد ومباشر دون إطالة ليناسب المكالمة الصوتية (لا تتجاوز 2-3 جمل في كل رد).
+`;
+
+  // إدارة مؤقت المكالمة
   useEffect(() => {
-    const currentTime = new Date().toLocaleTimeString("ar-SY", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setMessages((prev) =>
-      prev.map((m) => (m.id === "1" ? { ...m, time: currentTime } : m))
-    );
+    let timer: any;
+    if (callState === "active") {
+      timer = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setCallDuration(0);
+    }
+    return () => clearInterval(timer);
+  }, [callState]);
 
-    // إعداد المايك والتعرف على الصوت بمتصفح الموبايل
+  // إعداد المحرك الصوتي في المتصفح
+  useEffect(() => {
     if (typeof window !== "undefined") {
+      synthRef.current = window.speechSynthesis;
+
       const SpeechRecognition =
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
-        recognition.lang = "ar-SA";
-        recognition.continuous = false;
+        recognition.lang = "ar-SY"; // أو ar-SA
+        recognition.continuous = true;
         recognition.interimResults = false;
 
-        recognition.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          setIsRecording(false);
-          handleSend(transcript);
+        recognition.onresult = async (event: any) => {
+          const lastIndex = event.results.length - 1;
+          const userSpeech = event.results[lastIndex][0].transcript;
+          setTranscript(userSpeech);
+          await processUserSpeechWithGemini(userSpeech);
         };
 
         recognition.onerror = () => {
-          setIsRecording(false);
-        };
-
-        recognition.onend = () => {
-          setIsRecording(false);
+          setAiStatus("تعذر الاستماع، يرجى المحاولة مرّة أخرى...");
         };
 
         recognitionRef.current = recognition;
@@ -63,242 +75,198 @@ export default function Home() {
     }
   }, []);
 
-  // تحليل نص الطلب ومطابقته مع القائمة
-  const parseOrder = (text: string) => {
-    const foundItems: { item: MenuItem; qty: number }[] = [];
-    let total = 0;
+  // التحدث بصوت الكاشير (Text to Speech)
+  const speakText = (text: string, onEnd?: () => void) => {
+    if (!synthRef.current) return;
+    synthRef.current.cancel(); // إيقاف أي قراءة سابقة
 
-    MENU_DATA.forEach((menuItem) => {
-      if (text.includes(menuItem.name) || text.includes(menuItem.name.split(" ")[0])) {
-        // البحث عن عدد افتراضي
-        let qty = 1;
-        if (text.includes("2") || text.includes("اثنتين") || text.includes("وجبتين")) qty = 2;
-        if (text.includes("3") || text.includes("ثلاثة")) qty = 3;
-        if (text.includes("4") || text.includes("أربعة")) qty = 4;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "ar-SA";
+    utterance.rate = 0.95; // سرعة طبيعية للمكالمة
 
-        foundItems.push({ item: menuItem, qty });
-        total += menuItem.price * qty;
-      }
-    });
-
-    return { foundItems, total };
-  };
-
-  const handleSend = (textToSend?: string) => {
-    const text = textToSend || inputText;
-    if (!text.trim()) return;
-
-    const currentTime = new Date().toLocaleTimeString("ar-SY", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      sender: "user",
-      text: text.trim(),
-      time: currentTime,
+    utterance.onstart = () => setAiStatus("الكاشير يتحدث الآن...");
+    utterance.onend = () => {
+      setAiStatus("بانتظار حديثك...");
+      if (onEnd) onEnd();
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    if (!textToSend) setInputText("");
-
-    // معالجة الطلب وإرجاع الرد
-    setTimeout(() => {
-      const { foundItems, total } = parseOrder(text);
-
-      let botReplyText = "";
-      let orderSummary;
-
-      if (foundItems.length > 0) {
-        botReplyText = `تكرم عينك! سجّلت طلبك المبدئي. يرجى تأكيد الطلب لتمريره فوراً لشاشة الكاشير:`;
-        orderSummary = { items: foundItems, total };
-      } else {
-        botReplyText = `تكرم عينك! تلقيت طلبك: "${text}". حابب تضيف وجبات شاورما أو بروستد أو مشروبات من القائمة؟`;
-      }
-
-      const botReply: Message = {
-        id: (Date.now() + 1).toString(),
-        sender: "bot",
-        text: botReplyText,
-        time: new Date().toLocaleTimeString("ar-SY", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        orderSummary,
-      };
-
-      setMessages((prev) => [...prev, botReply]);
-    }, 800);
+    synthRef.current.speak(utterance);
   };
 
-  const toggleRecording = () => {
-    if (!recognitionRef.current) {
-      alert("التعرف على الصوت غير مدعوم في هذا المتصفح، يمكنك الكتابة بدلاً من ذلك.");
+  // إرسال حديث الزبون إلى Gemini API
+  const processUserSpeechWithGemini = async (userText: string) => {
+    setAiStatus("جاري معالجة الطلب بالذكاء الاصطناعي...");
+
+    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+    if (!apiKey) {
+      const fallbackReply = `تكرم عينك! سجّلت طلبك: "${userText}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
+      speakText(fallbackReply);
       return;
     }
 
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      setIsRecording(true);
-      recognitionRef.current.start();
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: systemPrompt },
+                  { text: `الزبون يقول: "${userText}"` },
+                ],
+              },
+            ],
+          }),
+        }
+      );
+
+      const data = await response.json();
+      const aiReply =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+        "تكرم عينك، وصل طلبك! حابب تضيف شيء ثانٍ؟";
+
+      speakText(aiReply);
+    } catch (error) {
+      console.error(error);
+      speakText("تكرم عينك يا غالي، سجّلت طلبك! حابب نتأكد من العنوان للتوصيل؟");
     }
   };
 
+  // بدء المكالمة
+  const startCall = () => {
+    setCallState("connecting");
+    setTimeout(() => {
+      setCallState("active");
+      if (recognitionRef.current && !isMuted) {
+        try {
+          recognitionRef.current.start();
+        } catch (e) {}
+      }
+      const welcomeMsg =
+        "أهلاً وسهلاً فيك بمأكولات العاصمة! معك الكاشير الرقمي، تفضل شو بتحب تطلب اليوم؟";
+      speakText(welcomeMsg);
+    }, 1500);
+  };
+
+  // إنهاء المكالمة
+  const endCall = () => {
+    if (synthRef.current) synthRef.current.cancel();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+    setCallState("idle");
+    setAiStatus("");
+    setTranscript("");
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
   return (
-    <main className="min-h-screen bg-[#0F0F0F] text-white flex flex-col justify-between max-w-md mx-auto dir-rtl border-x border-white/5 shadow-2xl">
+    <main className="min-h-screen bg-[#0F0F0F] text-white flex flex-col justify-between max-w-md mx-auto dir-rtl border-x border-white/5 shadow-2xl relative overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#D4AF37]/30 px-4 py-3 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-full border-2 border-[#D4AF37] bg-[#1A1A1A] flex items-center justify-center font-bold text-[#D4AF37] text-lg shadow-inner">
+      <header className="px-4 py-3 border-b border-[#D4AF37]/20 flex items-center justify-between bg-[#1A1A1A]/50">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-full border border-[#D4AF37] bg-[#0F0F0F] flex items-center justify-center font-bold text-[#D4AF37] text-sm">
             ع
           </div>
           <div>
-            <h1 className="font-bold text-[#D4AF37] text-base leading-tight">مأكولات العاصمة</h1>
-            <p className="text-[11px] text-gray-400">طعم أصيل .. جودة تستحق</p>
+            <h1 className="font-bold text-[#D4AF37] text-sm leading-tight">مأكولات العاصمة</h1>
+            <p className="text-[10px] text-gray-400">محاكاة المكالمة الصوتية المباشرة</p>
           </div>
         </div>
-
-        <a
-          href="tel:0994934278"
-          className="bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/40 p-2.5 rounded-full hover:bg-[#D4AF37] hover:text-black transition-all"
-        >
-          <Phone className="w-4 h-4" />
-        </a>
+        <div className="flex items-center gap-1 text-[11px] text-[#D4AF37] bg-[#D4AF37]/10 px-2.5 py-1 rounded-full border border-[#D4AF37]/30">
+          <Sparkles className="w-3 h-3" />
+          <span>Gemini AI Call</span>
+        </div>
       </header>
 
-      {/* Hero Header Minimal */}
-      <section className="px-4 py-2 text-center border-b border-white/5 bg-gradient-to-b from-[#1A1A1A] to-[#0F0F0F]">
-        <div className="flex items-center justify-center gap-1.5 text-[11px] text-[#D4AF37]">
-          <MapPin className="w-3.5 h-3.5" />
-          <span>التوصيل: يلدا - ببيلا - سيدي مقداد - جرمانا</span>
-        </div>
-      </section>
-
-      {/* Messages Container */}
-      <section className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[380px]">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex items-start gap-2.5 ${
-              msg.sender === "user" ? "flex-row-reverse" : "flex-row"
-            }`}
-          >
-            <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                msg.sender === "user"
-                  ? "bg-white/10 text-white border border-white/20"
-                  : "bg-[#D4AF37] text-black"
-              }`}
-            >
-              {msg.sender === "user" ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-            </div>
-
-            <div
-              className={`max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed ${
-                msg.sender === "user"
-                  ? "bg-[#D4AF37] text-black font-medium rounded-tr-none"
-                  : "bg-[#1A1A1A] text-gray-100 border border-[#D4AF37]/30 rounded-tl-none shadow-md"
-              }`}
-            >
-              <p>{msg.text}</p>
-
-              {/* كارت ملخص الفاتورة إن وجد */}
-              {msg.orderSummary && (
-                <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs text-[#D4AF37] font-bold">
-                    <ShoppingBag className="w-4 h-4" />
-                    <span>تفاصيل الطلب:</span>
-                  </div>
-                  {msg.orderSummary.items.map((entry, idx) => (
-                    <div key={idx} className="flex justify-between text-xs text-gray-300">
-                      <span>
-                        {entry.qty}x {entry.item.name}
-                      </span>
-                      <span>{(entry.item.price * entry.qty).toLocaleString()} ل.س</span>
-                    </div>
-                  ))}
-                  <div className="flex justify-between text-xs font-bold text-white pt-2 border-t border-white/10">
-                    <span>المجموع الإجمالي:</span>
-                    <span className="text-[#D4AF37]">
-                      {msg.orderSummary.total.toLocaleString()} ل.س
-                    </span>
-                  </div>
-                  <button
-                    onClick={() =>
-                      alert("تم إرسال الطلب بنجاح إلى شاشة الكاشير في مطعم العاصمة!")
-                    }
-                    className="w-full mt-2 bg-[#D4AF37] text-black py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-[#B8952B] transition-all"
-                  >
-                    <CheckCircle className="w-4 h-4" />
-                    <span>تأكيد وإرسال للكاشير</span>
-                  </button>
-                </div>
-              )}
-
-              <span
-                className={`text-[10px] block mt-1 text-left ${
-                  msg.sender === "user" ? "text-black/60" : "text-gray-400"
-                }`}
-              >
-                {msg.time}
-              </span>
-            </div>
+      {/* Main Call View */}
+      <section className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-6">
+        {/* Avatar with Radar Waves */}
+        <div className="relative">
+          {callState === "active" && (
+            <div className="absolute inset-0 rounded-full bg-[#D4AF37]/20 animate-ping scale-150 pointer-events-none" />
+          )}
+          <div className="w-32 h-32 rounded-full border-4 border-[#D4AF37] bg-[#1A1A1A] flex flex-col items-center justify-center shadow-2xl relative z-10">
+            <span className="text-4xl font-bold text-[#D4AF37]">ع</span>
+            <span className="text-[10px] text-gray-400 mt-1">مأكولات العاصمة</span>
           </div>
-        ))}
+        </div>
+
+        {/* Status Text */}
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold text-white">الكاشير الرقمي الذكي</h2>
+          {callState === "idle" && (
+            <p className="text-xs text-gray-400">انقر على زر الاتصال لبدء المكالمة والطلب بالصوت</p>
+          )}
+          {callState === "connecting" && (
+            <p className="text-xs text-[#D4AF37] animate-pulse">جاري الاتصال بمطعم العاصمة...</p>
+          )}
+          {callState === "active" && (
+            <div>
+              <p className="text-sm font-semibold text-[#D4AF37]">{formatDuration(callDuration)}</p>
+              <p className="text-xs text-gray-300 mt-1 flex items-center justify-center gap-1">
+                <Volume2 className="w-3.5 h-3.5 animate-bounce text-[#D4AF37]" />
+                <span>{aiStatus || "المكالمة نشطة..."}</span>
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Live Transcript Box */}
+        {callState === "active" && transcript && (
+          <div className="w-full bg-[#1A1A1A] border border-[#D4AF37]/30 p-3 rounded-2xl text-xs text-gray-200 animate-fade-in max-h-24 overflow-y-auto">
+            <span className="text-[#D4AF37] font-bold block mb-1">سمعنا منك:</span>
+            "{transcript}"
+          </div>
+        )}
       </section>
 
-      {/* Quick Suggestions */}
-      <div className="px-4 py-2 flex gap-2 overflow-x-auto no-scrollbar">
-        {["🌯 وجبة شاورما عربي دبل", "🍗 بروستد 4 قطع", "🥖 ساندويش زنجر", "🥤 مشروب كينزا"].map(
-          (item) => (
+      {/* Call Controls Bar */}
+      <footer className="p-6 bg-[#1A1A1A] border-t border-[#D4AF37]/20 rounded-t-3xl">
+        {callState === "idle" ? (
+          <button
+            onClick={startCall}
+            className="w-full bg-[#D4AF37] hover:bg-[#B8952B] text-black font-bold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#D4AF37]/10 transition-all text-base"
+          >
+            <Phone className="w-5 h-5 fill-current" />
+            <span>بدء مكالمة مع الكاشير</span>
+          </button>
+        ) : (
+          <div className="flex items-center justify-around">
+            {/* Mute Button */}
             <button
-              key={item}
-              onClick={() => handleSend(item)}
-              className="shrink-0 text-xs bg-[#1A1A1A] text-gray-300 border border-[#D4AF37]/30 px-3 py-1.5 rounded-full hover:border-[#D4AF37] hover:text-[#D4AF37] transition-all"
+              onClick={() => setIsMuted(!isMuted)}
+              className={`p-4 rounded-full border transition-all ${
+                isMuted
+                  ? "bg-red-500/20 text-red-500 border-red-500"
+                  : "bg-white/10 text-white border-white/20 hover:bg-white/20"
+              }`}
             >
-              {item}
+              {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
             </button>
-          )
+
+            {/* End Call Button */}
+            <button
+              onClick={endCall}
+              className="bg-red-600 hover:bg-red-700 text-white p-5 rounded-full shadow-lg transition-all"
+              title="إنهاء المكالمة"
+            >
+              <PhoneOff className="w-7 h-7 fill-current" />
+            </button>
+          </div>
         )}
-      </div>
-
-      {/* Input / Voice Bar */}
-      <footer className="p-3 bg-[#1A1A1A] border-t border-[#D4AF37]/30 sticky bottom-0">
-        <div className="flex items-center gap-2">
-          {/* Microphone Button */}
-          <button
-            onClick={toggleRecording}
-            className={`p-3 rounded-full border transition-all shrink-0 ${
-              isRecording
-                ? "bg-red-600 text-white border-red-500 animate-pulse"
-                : "bg-[#D4AF37]/10 text-[#D4AF37] border-[#D4AF37]/40 hover:bg-[#D4AF37] hover:text-black"
-            }`}
-            title="انقر للتحدث بالصوت"
-          >
-            <Mic className="w-5 h-5" />
-          </button>
-
-          {/* Text Input */}
-          <input
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder={isRecording ? "جاري الاستماع لصوتك..." : "اكتب طلبك هنا..."}
-            className="flex-1 bg-[#0F0F0F] text-white placeholder-gray-500 text-sm px-4 py-2.5 rounded-full border border-white/10 focus:outline-none focus:border-[#D4AF37] transition-all"
-          />
-
-          {/* Send Button */}
-          <button
-            onClick={() => handleSend()}
-            className="bg-[#D4AF37] text-black p-2.5 rounded-full hover:bg-[#B8952B] transition-all shrink-0 font-bold"
-          >
-            <Send className="w-4 h-4 rotate-180" />
-          </button>
-        </div>
       </footer>
     </main>
   );
