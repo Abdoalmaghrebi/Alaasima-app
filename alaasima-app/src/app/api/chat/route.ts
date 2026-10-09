@@ -11,54 +11,71 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
 مناطق التوصيل: يلدا، ببيلا، سيدي مقداد، جرمانا.
 
 مهامك أثناء المكالمة:
-1. الترحيب بالزبون وأخذ طلبه.
+1. متابعة الحوار مع الزبون وفهم طلباته بناءً على الرسائل السابقة.
 2. اقتراح إضافة سرافيس أو مشروبات (مثل ثوم، مخلل، كينزا).
-3. تأكيد الطلب والسعر الإجمالي وحساب منطقة التوصيل.
-4. الإجابة باختصار شديد ومباشر دون إطالة ليناسب المكالمة الصوتية (لا تتجاوز 2-3 جمل في كل رد).
+3. تأكيد الطلب والسعر الإجمالي وحساب منطقة التوصيل عند إنهاء الطلب.
+4. الإجابة باختصار شديد ومباشر دون إطالة (2-3 جمل في كل رد).
 `;
 
 export async function POST(req: Request) {
   try {
-    const { userSpeech, isGreeting } = await req.json();
+    const { userSpeech, history } = await req.json();
 
     const geminiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     const elevenKey = process.env.ELEVENLABS_API_KEY || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
     const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
-    let aiReply = "أهلاً وسهلاً فيك. مأكولات العاصمة! تفضل شو طلبك";
+    let aiReply = "تكرم عينك، وصل طلبك! حابب تضيف شي ثانٍ من القائمة؟";
 
-    // إذا لم يكن طلب ترحيب أولي، نرسل كلام الزبون لـ Gemini
-    if (!isGreeting && userSpeech && geminiKey) {
+    // بناء سجل المحادثة لـ Gemini
+    if (userSpeech && geminiKey) {
       try {
+        const contents = [
+          {
+            role: "user",
+            parts: [{ text: systemPrompt }],
+          },
+          {
+            role: "model",
+            parts: [{ text: "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟" }],
+          },
+        ];
+
+        // إضافة الرسائل السابقة إن وجدت
+        if (Array.isArray(history)) {
+          history.forEach((msg: { sender: string; text: string }) => {
+            contents.push({
+              role: msg.sender === "user" ? "user" : "model",
+              parts: [{ text: msg.text }],
+            });
+          });
+        }
+
+        // إضافة رسالة الزبون الحالية
+        contents.push({
+          role: "user",
+          parts: [{ text: userSpeech }],
+        });
+
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: systemPrompt },
-                    { text: `الزبون يقول: "${userSpeech}"` },
-                  ],
-                },
-              ],
-            }),
+            body: JSON.stringify({ contents }),
           }
         );
+
         const geminiData = await geminiRes.json();
         if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
           aiReply = geminiData.candidates[0].content.parts[0].text;
         }
       } catch (e) {
         console.error("Gemini Error:", e);
-        aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
       }
     }
 
-    // تحويل الرد إلى صوت عبر ElevenLabs
+    // توليد الصوت عبر ElevenLabs
     if (elevenKey) {
       try {
         const elevenRes = await fetch(
