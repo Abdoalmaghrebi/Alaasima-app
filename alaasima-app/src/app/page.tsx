@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Phone, MapPin, Sparkles, Mic, Send, Bot, User, UtensilsCrossed } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Phone, MapPin, Mic, Send, Bot, User } from "lucide-react";
 
 interface Message {
   id: string;
@@ -16,21 +16,37 @@ export default function Home() {
       id: "1",
       sender: "bot",
       text: "أهلاً بك في مأكولات العاصمة! 🌯 كيف بقدر أساعدك بالطلب اليوم؟ شو حابب تطلب؟",
-      time: new Date().toLocaleTimeString("ar-SY", { hour: "2-digit", minute: "2-digit" }),
+      time: "الآن",
     },
   ]);
   const [inputText, setInputText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
 
+  // تحديث وقت أول رسالة بعد التحميل في المتصفح
+  useEffect(() => {
+    const currentTime = new Date().toLocaleTimeString("ar-SY", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    setMessages((prev) =>
+      prev.map((m) => (m.id === "1" ? { ...m, time: currentTime } : m))
+    );
+  }, []);
+
   const handleSend = (textToSend?: string) => {
     const text = textToSend || inputText;
     if (!text.trim()) return;
+
+    const currentTime = new Date().toLocaleTimeString("ar-SY", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
     const userMsg: Message = {
       id: Date.now().toString(),
       sender: "user",
       text: text.trim(),
-      time: new Date().toLocaleTimeString("ar-SY", { hour: "2-digit", minute: "2-digit" }),
+      time: currentTime,
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -42,7 +58,10 @@ export default function Home() {
         id: (Date.now() + 1).toString(),
         sender: "bot",
         text: `تكرم عينك! سجّلت طلبك: "${text}". حابب تضيف علبة ثوم أو مخلل أو مشروب مع الطلب؟`,
-        time: new Date().toLocaleTimeString("ar-SY", { hour: "2-digit", minute: "2-digit" }),
+        time: new Date().toLocaleTimeString("ar-SY", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
       setMessages((prev) => [...prev, botReply]);
     }, 1000);
@@ -50,7 +69,6 @@ export default function Home() {
 
   const toggleRecording = () => {
     setIsRecording(!isRecording);
-    // سيتم ربط الـ Web Speech API أو الصوت هنا في الخطوة القادمة
   };
 
   return (
