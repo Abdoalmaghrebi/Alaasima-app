@@ -19,15 +19,16 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
 
 export async function POST(req: Request) {
   try {
-    const { userSpeech } = await req.json();
+    const { userSpeech, isGreeting } = await req.json();
 
     const geminiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     const elevenKey = process.env.ELEVENLABS_API_KEY || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
     const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
-    let aiReply = "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟";
+    let aiReply = "أهلاً وسهلاً فيك. مأكولات العاصمة! تفضل شو طلبك";
 
-    if (userSpeech && userSpeech !== "مرحبا أهلاً وسهلاً" && geminiKey) {
+    // إذا لم يكن طلب ترحيب أولي، نرسل كلام الزبون لـ Gemini
+    if (!isGreeting && userSpeech && geminiKey) {
       try {
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
@@ -53,10 +54,11 @@ export async function POST(req: Request) {
         }
       } catch (e) {
         console.error("Gemini Error:", e);
+        aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
       }
     }
 
-    // إذا توفر مفتاح ElevenLabs تحويل لـ Audio MP3
+    // تحويل الرد إلى صوت عبر ElevenLabs
     if (elevenKey) {
       try {
         const elevenRes = await fetch(
