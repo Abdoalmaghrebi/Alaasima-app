@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Phone, PhoneOff, Mic, MicOff, Sparkles, Volume2 } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Sparkles, Volume2, Send } from "lucide-react";
 
 export default function Home() {
   const [callState, setCallState] = useState<"idle" | "connecting" | "active">("idle");
@@ -9,11 +9,12 @@ export default function Home() {
   const [callDuration, setCallDuration] = useState(0);
   const [transcript, setTranscript] = useState<string>("");
   const [aiStatus, setAiStatus] = useState<string>("");
+  const [inputText, setInputText] = useState<string>("");
 
-  const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isCallingRef = useRef<boolean>(false);
-  const isProcessingRef = useRef<boolean>(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     let timer: any;
@@ -27,70 +28,11 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [callState]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.lang = "ar-SY";
-        recognition.continuous = false;
-        recognition.interimResults = false;
-
-        recognition.onresult = async (event: any) => {
-          if (isProcessingRef.current) return;
-          const userSpeech = event.results[0][0].transcript;
-          setTranscript(userSpeech);
-          await processUserSpeech(userSpeech);
-        };
-
-        recognition.onerror = () => {
-          if (isCallingRef.current && !isProcessingRef.current) {
-            safeStartRecognition();
-          }
-        };
-
-        recognition.onend = () => {
-          if (
-            isCallingRef.current &&
-            !isProcessingRef.current &&
-            (!audioRef.current || audioRef.current.paused)
-          ) {
-            safeStartRecognition();
-          }
-        };
-
-        recognitionRef.current = recognition;
-      }
-    }
-  }, []);
-
-  const safeStartRecognition = () => {
-    if (recognitionRef.current && isCallingRef.current && !isProcessingRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
-      setTimeout(() => {
-        try {
-          recognitionRef.current.start();
-          setAiStatus("عم أسمعك.. تفضل احكي");
-        } catch (e) {}
-      }, 100);
-    }
-  };
-
+  // إرسال النص إلى API
   const processUserSpeech = async (userSpeech: string) => {
     if (!userSpeech.trim()) return;
 
-    isProcessingRef.current = true;
-    setAiStatus("جاري معالجة الطلب بذكاء العاصمة...");
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
-    }
+    setAiStatus("جاري معالجة طلبك بذكاء العاصمة...");
 
     try {
       const res = await fetch("/api/chat", {
@@ -114,25 +56,21 @@ export default function Home() {
 
         setAiStatus("الكاشير يتحدث الآن...");
         audio.onended = () => {
-          isProcessingRef.current = false;
-          setAiStatus("عم أسمعك.. تفضل احكي");
-          safeStartRecognition();
+          setAiStatus("الكاشير بانتظار إجابتك...");
         };
 
         await audio.play();
       } else {
-        isProcessingRef.current = false;
-        setAiStatus("عم أسمعك.. تفضل احكي");
-        safeStartRecognition();
+        const data = await res.json();
+        setAiStatus("الكاشير بانتظار إجابتك...");
       }
     } catch (err) {
       console.error(err);
-      isProcessingRef.current = false;
-      setAiStatus("حدث خطأ في الاتصال بالسيرفر...");
-      safeStartRecognition();
+      setAiStatus("حدث خطأ بالاتصال...");
     }
   };
 
+  // بدء المكالمة
   const startCall = async () => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -142,7 +80,6 @@ export default function Home() {
     }
 
     isCallingRef.current = true;
-    isProcessingRef.current = false;
     setCallState("connecting");
 
     setTimeout(async () => {
@@ -153,14 +90,8 @@ export default function Home() {
 
   const endCall = () => {
     isCallingRef.current = false;
-    isProcessingRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
-    }
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
     }
     setCallState("idle");
     setAiStatus("");
@@ -223,6 +154,38 @@ export default function Home() {
           )}
         </div>
 
+        {/* حقل إدخال إضافي أثناء المكالمة للرد السريع بالصوت أو النص */}
+        {callState === "active" && (
+          <div className="w-full mt-4 flex gap-2">
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && inputText.trim()) {
+                  setTranscript(inputText);
+                  processUserSpeech(inputText);
+                  setInputText("");
+                }
+              }}
+              placeholder="تحدث أو اكتب إجابتك هنا (مثلاً: بدي 2 شاورما)..."
+              className="flex-1 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#D4AF37]"
+            />
+            <button
+              onClick={() => {
+                if (inputText.trim()) {
+                  setTranscript(inputText);
+                  processUserSpeech(inputText);
+                  setInputText("");
+                }
+              }}
+              className="bg-[#D4AF37] text-black px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center"
+            >
+              <Send className="w-4 h-4 rotate-180" />
+            </button>
+          </div>
+        )}
+
         {callState === "active" && transcript && (
           <div className="w-full bg-[#1A1A1A] border border-[#D4AF37]/30 p-3 rounded-2xl text-xs text-gray-200 animate-fade-in max-h-24 overflow-y-auto">
             <span className="text-[#D4AF37] font-bold block mb-1">سمعنا منك:</span>
@@ -265,4 +228,4 @@ export default function Home() {
       </footer>
     </main>
   );
-        }
+}
