@@ -110,7 +110,7 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
   const processUserSpeechWithGemini = async (userText: string) => {
     setAiStatus("جاري معالجة الطلب بالذكاء الاصطناعي...");
 
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       const fallbackReply = `تكرم عينك! سجّلت طلبك: "${userText}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
