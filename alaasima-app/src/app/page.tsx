@@ -12,6 +12,7 @@ export default function Home() {
 
   const recognitionRef = useRef<any>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const isCallingRef = useRef<boolean>(false);
 
   // إدارة وقت المكالمة
   useEffect(() => {
@@ -35,18 +36,29 @@ export default function Home() {
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
         recognition.lang = "ar-SY";
-        recognition.continuous = true;
+        recognition.continuous = false; // أفضل على أجهزة الموبايل لتفادي التجميد
         recognition.interimResults = false;
 
         recognition.onresult = async (event: any) => {
-          const lastIndex = event.results.length - 1;
-          const userSpeech = event.results[lastIndex][0].transcript;
+          const userSpeech = event.results[0][0].transcript;
           setTranscript(userSpeech);
           await processUserSpeech(userSpeech);
         };
 
-        recognition.onerror = () => {
-          setAiStatus("تعذر الاستماع، يرجى المحاولة مرّة أخرى...");
+        recognition.onerror = (err: any) => {
+          console.log("Speech Error:", err);
+          if (isCallingRef.current) {
+            setAiStatus("عم أسمعك.. احكي تفضل");
+          }
+        };
+
+        recognition.onend = () => {
+          // إعادة تشغيل المايك تلقائياً طالما المكالمة جارية
+          if (isCallingRef.current && !audioRef.current?.ended === false) {
+            try {
+              recognition.start();
+            } catch (e) {}
+          }
         };
 
         recognitionRef.current = recognition;
@@ -54,9 +66,25 @@ export default function Home() {
     }
   }, []);
 
+  const startListening = () => {
+    if (recognitionRef.current && isCallingRef.current) {
+      try {
+        recognitionRef.current.start();
+        setAiStatus("عم أسمعك.. تفضل احكي");
+      } catch (e) {}
+    }
+  };
+
   // معالجة الكلام عبر الـ API
   const processUserSpeech = async (userSpeech: string) => {
+    if (!userSpeech.trim()) return;
+
     setAiStatus("جاري معالجة الطلب بذكاء العاصمة...");
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
 
     try {
       const res = await fetch("/api/chat", {
@@ -78,35 +106,44 @@ export default function Home() {
 
         setAiStatus("الكاشير يتحدث الآن...");
         audio.onended = () => {
-          setAiStatus("بانتظار حديثك...");
+          setAiStatus("عم أسمعك.. تفضل احكي");
+          startListening();
         };
 
         await audio.play();
       } else {
-        setAiStatus("بانتظار حديثك...");
+        setAiStatus("عم أسمعك.. تفضل احكي");
+        startListening();
       }
     } catch (err) {
       console.error(err);
       setAiStatus("حدث خطأ في الاتصال بالسيرفر...");
+      startListening();
     }
   };
 
-  // بدء المكالمة
-  const startCall = () => {
+  // بدء المكالمةطلب أذونات المايك صراحة
+  const startCall = async () => {
+    try {
+      // طلب إذن الميكروفون من المتصفح مباشرة
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert("يرجى إعطاء إذن الميكروفون للمتصفح حتى يتمكن الكاشير من سماعك.");
+      return;
+    }
+
+    isCallingRef.current = true;
     setCallState("connecting");
+
     setTimeout(async () => {
       setCallState("active");
-      if (recognitionRef.current && !isMuted) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {}
-      }
-      await processUserSpeech("مرحبا");
-    }, 1200);
+      await processUserSpeech("مرحبا أهلاً وسهلاً");
+    }, 1000);
   };
 
   // إنهاء المكالمة
   const endCall = () => {
+    isCallingRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
     }
