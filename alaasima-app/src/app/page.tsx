@@ -77,21 +77,34 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
 
   // التحدث بصوت الكاشير (Text to Speech)
   const speakText = (text: string, onEnd?: () => void) => {
-    if (!synthRef.current) return;
-    synthRef.current.cancel(); // إيقاف أي قراءة سابقة
+  if (!synthRef.current) return;
+  synthRef.current.cancel();
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "ar-SA";
-    utterance.rate = 0.95; // سرعة طبيعية للمكالمة
+  const utterance = new SpeechSynthesisUtterance(text);
+  
+  // البحث عن أصوات طبيعية محسّنة بدلاً من الصوت الآلي الافتراضي
+  const voices = synthRef.current.getVoices();
+  const naturalVoice = voices.find(
+    (v) => (v.lang.includes("ar") && (v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Online")))
+  );
 
-    utterance.onstart = () => setAiStatus("الكاشير يتحدث الآن...");
-    utterance.onend = () => {
-      setAiStatus("بانتظار حديثك...");
-      if (onEnd) onEnd();
-    };
+  if (naturalVoice) {
+    utterance.voice = naturalVoice;
+  }
 
-    synthRef.current.speak(utterance);
+  utterance.lang = "ar-SY";
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+
+  utterance.onstart = () => setAiStatus("الكاشير يتحدث الآن...");
+  utterance.onend = () => {
+    setAiStatus("بانتظار حديثك...");
+    if (onEnd) onEnd();
   };
+
+  synthRef.current.speak(utterance);
+};
+
 
   // إرسال حديث الزبون إلى Gemini API
   const processUserSpeechWithGemini = async (userText: string) => {
