@@ -26,8 +26,9 @@ export async function POST(req: Request) {
     const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
     let aiReply = "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟";
+    let geminiStatus = "Not Called";
 
-    // إذا لم تكن رسالة ترحيب أولية، معالجة الطلب بـ Gemini
+    // معالجة طلب Gemini
     if (!isGreeting && userSpeech) {
       if (geminiKey) {
         try {
@@ -56,21 +57,27 @@ export async function POST(req: Request) {
             }
           );
 
+          geminiStatus = `Gemini HTTP ${geminiRes.status}`;
           const geminiData = await geminiRes.json();
+
           if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
             aiReply = geminiData.candidates[0].content.parts[0].text;
+            geminiStatus += " - Success";
+          } else {
+            geminiStatus += " - No Text In Response";
           }
-        } catch (e) {
-          console.error("Gemini API Error:", e);
+        } catch (e: any) {
+          console.error("Gemini Error:", e);
+          geminiStatus = `Gemini Exception: ${e.message}`;
           aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
         }
       } else {
-        // الرد المحلي الذكي بحال عدم قراءة المفتاح
-        aiReply = `تكرم عينك يا غالي! سجّلت طلبك: "${userSpeech}". حابب تضيف وجبات شاورما أو مشروبات ثانية مع الطلب؟`;
+        geminiStatus = "Missing GEMINI_API_KEY";
+        aiReply = `تكرم عينك يا غالي! سجّلت طلبك: "${userSpeech}". حابب تضيف شيء ثانٍ؟`;
       }
     }
 
-    // توليد الصوت البشري عبر ElevenLabs
+    // توليد الصوت عبر ElevenLabs
     if (elevenKey) {
       try {
         const elevenRes = await fetch(
@@ -95,16 +102,20 @@ export async function POST(req: Request) {
             headers: {
               "Content-Type": "audio/mpeg",
               "X-Ai-Reply-Text": encodeURIComponent(aiReply),
+              "X-Gemini-Status": encodeURIComponent(geminiStatus),
             },
           });
         }
       } catch (e) {
-        console.error("ElevenLabs API Error:", e);
+        console.error("ElevenLabs Error:", e);
       }
     }
 
-    return NextResponse.json({ replyText: aiReply });
-  } catch (error) {
-    return NextResponse.json({ error: "خطأ بالسيرفر" }, { status: 500 });
+    return NextResponse.json(
+      { replyText: aiReply, geminiStatus },
+      { headers: { "X-Gemini-Status": encodeURIComponent(geminiStatus) } }
+    );
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
