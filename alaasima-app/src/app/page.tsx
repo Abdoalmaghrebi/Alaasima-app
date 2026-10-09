@@ -110,8 +110,21 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
   const processUserSpeechWithGemini = async (userText: string) => {
     setAiStatus("جاري معالجة الطلب بالذكاء الاصطناعي...");
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    // قراءة مفتاح Gemini
+const apiKeyGemini = 
+  process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
+  process.env.GEMINI_API_KEY;
 
+// قراءة مفتاح وبصمة صوت ElevenLabs
+const apiKeyElevenLabs = 
+  process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY || 
+  process.env.ELEVENLABS_API_KEY;
+
+const voiceIdElevenLabs = 
+  process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || 
+  process.env.ELEVENLABS_VOICE_ID || 
+  "21m00Tcm4TlvDq8ikWAM"; // صوت افتراضي بحال عدم التحديد
+    
     if (!apiKey) {
       const fallbackReply = `تكرم عينك! سجّلت طلبك: "${userText}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
       speakText(fallbackReply);
