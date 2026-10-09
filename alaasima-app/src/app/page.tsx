@@ -119,7 +119,7 @@ export default function Home() {
     }
   };
 
-  const startCall = async () => {
+   const startCall = async () => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
@@ -131,9 +131,54 @@ export default function Home() {
     setCallState("connecting");
     setChatHistory([]);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setCallState("active");
+      // طلب واستلام صوت الترحيب الأولي فوراً من السيرفر
+      await sendGreetingCall();
+    }, 800);
+  };
+
+  const sendGreetingCall = async () => {
+    setAiStatus("جاري الاتصال بالكاشير...");
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isGreeting: true }),
+      });
+
+      const contentType = res.headers.get("Content-Type") || "";
+      const replyHeader = res.headers.get("X-Ai-Reply-Text");
+      const replyText = replyHeader ? decodeURIComponent(replyHeader) : "أهلاً وسهلاً بك بمأكولات العاصمة!";
+
+      setChatHistory([{ sender: "bot", text: replyText }]);
+
+      if (contentType.includes("audio/mpeg")) {
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+
+        if (audioRef.current) audioRef.current.pause();
+
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        setAiStatus("الكاشير يتحدث الآن...");
+        audio.onended = () => {
+          setAiStatus("عم أسمعك.. تفضل احكي");
+          if (recognitionRef.current && isCallingRef.current) {
+            try { recognitionRef.current.start(); } catch (e) {}
+          }
+        };
+
+        await audio.play();
+      } else {
+        setAiStatus("عم أسمعك.. تفضل احكي");
+      }
+    } catch (e) {
       setAiStatus("عم أسمعك.. تفضل احكي");
+    }
+  };
+
       // تشغيل الترحيب الأولي محلياً
       const welcomeText = "أهلاً وسهلاً بك بمأكولات العاصمة! معك الكاشير الرقمي، تفضل شو بتحب تطلب اليوم؟";
       setChatHistory([{ sender: "bot", text: welcomeText }]);
