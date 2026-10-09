@@ -3,6 +3,11 @@
 import { useState, useEffect, useRef } from "react";
 import { Phone, PhoneOff, Mic, MicOff, Sparkles, Volume2, Send } from "lucide-react";
 
+interface ChatMessage {
+  sender: "user" | "bot";
+  text: string;
+}
+
 export default function Home() {
   const [callState, setCallState] = useState<"idle" | "connecting" | "active">("idle");
   const [isMuted, setIsMuted] = useState(false);
@@ -10,11 +15,11 @@ export default function Home() {
   const [transcript, setTranscript] = useState<string>("");
   const [aiStatus, setAiStatus] = useState<string>("");
   const [inputText, setInputText] = useState<string>("");
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const isCallingRef = useRef<boolean>(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     let timer: any;
@@ -28,20 +33,60 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [callState]);
 
-  // إرسال النص إلى API
-  const processUserSpeech = async (userSpeech: string) => {
-    if (!userSpeech.trim()) return;
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.lang = "ar-SY";
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onresult = async (event: any) => {
+          const userSpeech = event.results[0][0].transcript;
+          if (userSpeech && userSpeech.trim()) {
+            setTranscript(userSpeech);
+            await sendMessage(userSpeech);
+          }
+        };
+
+        recognition.onend = () => {
+          if (isCallingRef.current && (!audioRef.current || audioRef.current.paused)) {
+            try {
+              recognition.start();
+            } catch (e) {}
+          }
+        };
+
+        recognitionRef.current = recognition;
+      }
+    }
+  }, [chatHistory]);
+
+  const sendMessage = async (userText: string) => {
+    if (!userText.trim()) return;
 
     setAiStatus("جاري معالجة طلبك بذكاء العاصمة...");
+
+    // تحديث المحادثة محلياً
+    const updatedHistory = [...chatHistory, { sender: "user" as const, text: userText }];
+    setChatHistory(updatedHistory);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userSpeech }),
+        body: JSON.stringify({ userSpeech: userText, history: chatHistory }),
       });
 
       const contentType = res.headers.get("Content-Type") || "";
+      const replyHeader = res.headers.get("X-Ai-Reply-Text");
+      const replyText = replyHeader ? decodeURIComponent(replyHeader) : "تكرم عينك!";
+
+      // إدراج رد المساعد في السجل
+      setChatHistory([...updatedHistory, { sender: "bot", text: replyText }]);
 
       if (contentType.includes("audio/mpeg")) {
         const blob = await res.blob();
@@ -56,13 +101,17 @@ export default function Home() {
 
         setAiStatus("الكاشير يتحدث الآن...");
         audio.onended = () => {
-          setAiStatus("الكاشير بانتظار إجابتك...");
+          setAiStatus("عم أسمعك.. تفضل احكي");
+          if (recognitionRef.current && isCallingRef.current) {
+            try {
+              recognitionRef.current.start();
+            } catch (e) {}
+          }
         };
 
         await audio.play();
       } else {
-        const data = await res.json();
-        setAiStatus("الكاشير بانتظار إجابتك...");
+        setAiStatus("عم أسمعك.. تفضل احكي");
       }
     } catch (err) {
       console.error(err);
@@ -70,7 +119,6 @@ export default function Home() {
     }
   };
 
-  // بدء المكالمة
   const startCall = async () => {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -81,10 +129,20 @@ export default function Home() {
 
     isCallingRef.current = true;
     setCallState("connecting");
+    setChatHistory([]);
 
-    setTimeout(async () => {
+    setTimeout(() => {
       setCallState("active");
-      await processUserSpeech("مرحبا أهلاً وسهلاً");
+      setAiStatus("عم أسمعك.. تفضل احكي");
+      // تشغيل الترحيب الأولي محلياً
+      const welcomeText = "أهلاً وسهلاً بك بمأكولات العاصمة! معك الكاشير الرقمي، تفضل شو بتحب تطلب اليوم؟";
+      setChatHistory([{ sender: "bot", text: welcomeText }]);
+
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch (e) {}
+      }
     }, 1000);
   };
 
@@ -93,9 +151,23 @@ export default function Home() {
     if (audioRef.current) {
       audioRef.current.pause();
     }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
     setCallState("idle");
     setAiStatus("");
     setTranscript("");
+    setChatHistory([]);
+  };
+
+  const handleManualSend = () => {
+    if (!inputText.trim()) return;
+    const text = inputText.trim();
+    setTranscript(text);
+    setInputText("");
+    sendMessage(text);
   };
 
   const formatDuration = (seconds: number) => {
@@ -154,31 +226,19 @@ export default function Home() {
           )}
         </div>
 
-        {/* حقل إدخال إضافي أثناء المكالمة للرد السريع بالصوت أو النص */}
+        {/* حقل الإدخال النصي أثناء المكالمة */}
         {callState === "active" && (
           <div className="w-full mt-4 flex gap-2">
             <input
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && inputText.trim()) {
-                  setTranscript(inputText);
-                  processUserSpeech(inputText);
-                  setInputText("");
-                }
-              }}
-              placeholder="تحدث أو اكتب إجابتك هنا (مثلاً: بدي 2 شاورما)..."
+              onKeyDown={(e) => e.key === "Enter" && handleManualSend()}
+              placeholder="اكتب طلبك هنا (مثلاً: بدي 2 شاورما عربي)..."
               className="flex-1 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#D4AF37]"
             />
             <button
-              onClick={() => {
-                if (inputText.trim()) {
-                  setTranscript(inputText);
-                  processUserSpeech(inputText);
-                  setInputText("");
-                }
-              }}
+              onClick={handleManualSend}
               className="bg-[#D4AF37] text-black px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center"
             >
               <Send className="w-4 h-4 rotate-180" />
@@ -186,9 +246,10 @@ export default function Home() {
           </div>
         )}
 
+        {/* عرض النص الملتقط والسجل */}
         {callState === "active" && transcript && (
           <div className="w-full bg-[#1A1A1A] border border-[#D4AF37]/30 p-3 rounded-2xl text-xs text-gray-200 animate-fade-in max-h-24 overflow-y-auto">
-            <span className="text-[#D4AF37] font-bold block mb-1">سمعنا منك:</span>
+            <span className="text-[#D4AF37] font-bold block mb-1">وصلنا منك:</span>
             "{transcript}"
           </div>
         )}
