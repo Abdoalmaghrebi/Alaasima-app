@@ -19,63 +19,58 @@ ${MENU_DATA.map((i) => `- ${i.name}: ${i.price} ليرة سورية (${i.descrip
 
 export async function POST(req: Request) {
   try {
-    const { userSpeech, history } = await req.json();
+    const { userSpeech, isGreeting, history } = await req.json();
 
     const geminiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     const elevenKey = process.env.ELEVENLABS_API_KEY || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
     const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
-    let aiReply = "تكرم عينك، وصل طلبك! حابب تضيف شي ثانٍ من القائمة؟";
+    let aiReply = "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟";
 
-    // بناء سجل المحادثة لـ Gemini
-    if (userSpeech && geminiKey) {
-      try {
-        const contents = [
-          {
-            role: "user",
-            parts: [{ text: systemPrompt }],
-          },
-          {
-            role: "model",
-            parts: [{ text: "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟" }],
-          },
-        ];
+    // إذا لم تكن رسالة ترحيب أولية، معالجة الطلب بـ Gemini
+    if (!isGreeting && userSpeech) {
+      if (geminiKey) {
+        try {
+          const contents = [
+            { role: "user", parts: [{ text: systemPrompt }] },
+            { role: "model", parts: [{ text: "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟" }] }
+          ];
 
-        // إضافة الرسائل السابقة إن وجدت
-        if (Array.isArray(history)) {
-          history.forEach((msg: { sender: string; text: string }) => {
-            contents.push({
-              role: msg.sender === "user" ? "user" : "model",
-              parts: [{ text: msg.text }],
+          if (Array.isArray(history)) {
+            history.forEach((msg: { sender: string; text: string }) => {
+              contents.push({
+                role: msg.sender === "user" ? "user" : "model",
+                parts: [{ text: msg.text }],
+              });
             });
-          });
-        }
-
-        // إضافة رسالة الزبون الحالية
-        contents.push({
-          role: "user",
-          parts: [{ text: userSpeech }],
-        });
-
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents }),
           }
-        );
 
-        const geminiData = await geminiRes.json();
-        if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
-          aiReply = geminiData.candidates[0].content.parts[0].text;
+          contents.push({ role: "user", parts: [{ text: userSpeech }] });
+
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents }),
+            }
+          );
+
+          const geminiData = await geminiRes.json();
+          if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
+            aiReply = geminiData.candidates[0].content.parts[0].text;
+          }
+        } catch (e) {
+          console.error("Gemini API Error:", e);
+          aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب كينزا أو صحن بطاطا مع الطلب؟`;
         }
-      } catch (e) {
-        console.error("Gemini Error:", e);
+      } else {
+        // الرد المحلي الذكي بحال عدم قراءة المفتاح
+        aiReply = `تكرم عينك يا غالي! سجّلت طلبك: "${userSpeech}". حابب تضيف وجبات شاورما أو مشروبات ثانية مع الطلب؟`;
       }
     }
 
-    // توليد الصوت عبر ElevenLabs
+    // توليد الصوت البشري عبر ElevenLabs
     if (elevenKey) {
       try {
         const elevenRes = await fetch(
@@ -89,10 +84,7 @@ export async function POST(req: Request) {
             body: JSON.stringify({
               text: aiReply,
               model_id: "eleven_multilingual_v2",
-              voice_settings: {
-                stability: 0.5,
-                similarity_boost: 0.75,
-              },
+              voice_settings: { stability: 0.5, similarity_boost: 0.75 },
             }),
           }
         );
@@ -107,7 +99,7 @@ export async function POST(req: Request) {
           });
         }
       } catch (e) {
-        console.error("ElevenLabs Error:", e);
+        console.error("ElevenLabs API Error:", e);
       }
     }
 
