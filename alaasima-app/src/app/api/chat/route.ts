@@ -47,9 +47,9 @@ export async function POST(req: Request) {
 
           contents.push({ role: "user", parts: [{ text: userSpeech }] });
 
-          // استخدام المسار المباشر المحدث لـ Gemini 1.5/2.0
+          // استخدام الاسم الصحيح والدقيق للموديل المعتمد في Google AI Studio
           const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -63,29 +63,14 @@ export async function POST(req: Request) {
           if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
             aiReply = geminiData.candidates[0].content.parts[0].text;
             geminiStatus += " - Success";
-          } else {
-            // محاولة ثانية بمسار gemini-2.0-flash الاحتياطي في حال 404
-            const fallbackRes = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents }),
-              }
-            );
-            const fallbackData = await fallbackRes.json();
-            if (fallbackData?.candidates?.[0]?.content?.parts?.[0]?.text) {
-              aiReply = fallbackData.candidates[0].content.parts[0].text;
-              geminiStatus = "Gemini 2.0 - Success";
-            } else {
-              geminiStatus += ` | Fallback Error: ${JSON.stringify(geminiData.error || fallbackData.error || {})}`;
-              aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف علبة ثوم أو مشروب كينزا مع الشاورما؟`;
-            }
+          } else if (geminiData?.error) {
+            geminiStatus += ` - Error: ${geminiData.error.message}`;
+            aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف شيء ثانٍ؟`;
           }
         } catch (e: any) {
           console.error("Gemini Error:", e);
           geminiStatus = `Gemini Exception: ${e.message}`;
-          aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب مع الطلب؟`;
+          aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف شيء ثانٍ؟`;
         }
       } else {
         geminiStatus = "Missing GEMINI_API_KEY";
