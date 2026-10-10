@@ -47,9 +47,9 @@ export async function POST(req: Request) {
 
           contents.push({ role: "user", parts: [{ text: userSpeech }] });
 
-          // استخدام الاسم الصحيح والدقيق للموديل المعتمد في Google AI Studio
+          // التبديل إلى نموذج gemini-2.0-flash المعتمد والمستقر
           const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -78,7 +78,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // تحويل الرد إلى صوت عبر ElevenLabs
     if (elevenKey) {
       try {
         const elevenRes = await fetch(
