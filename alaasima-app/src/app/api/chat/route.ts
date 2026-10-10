@@ -22,12 +22,11 @@ export async function POST(req: Request) {
     const { userSpeech, isGreeting, history } = await req.json();
 
     const geminiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     const elevenKey = process.env.ELEVENLABS_API_KEY || process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
     const voiceId = process.env.ELEVENLABS_VOICE_ID || process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
 
     let aiReply = "أهلاً وسهلاً بك في مأكولات العاصمة! تفضل شو بتحب تطلب اليوم؟";
-    let geminiStatus = "Not Called";
+    let geminiStatus = "Greeting Default";
 
     if (!isGreeting && userSpeech) {
       if (geminiKey) {
@@ -47,34 +46,49 @@ export async function POST(req: Request) {
 
         contents.push({ role: "user", parts: [{ text: userSpeech }] });
 
-        try {
-          const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiKey}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ contents }),
+        // قائمة النماذج المتاحة بالتسلسل
+        const candidateModels = [
+          "gemini-1.5-flash",
+          "gemini-1.5-pro",
+          "gemini-2.0-flash-exp"
+        ];
+
+        let success = false;
+
+        for (const model of candidateModels) {
+          try {
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents }),
+              }
+            );
+
+            if (geminiRes.ok) {
+              const geminiData = await geminiRes.json();
+              if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
+                aiReply = geminiData.candidates[0].content.parts[0].text;
+                geminiStatus = `Gemini (${model}) - Success 200`;
+                success = true;
+                break;
+              }
+            } else {
+              const errData = await geminiRes.json();
+              geminiStatus = `Failed ${model}: ${errData?.error?.message || geminiRes.status}`;
             }
-          );
-
-          geminiStatus = `Gemini (${modelName}) HTTP ${geminiRes.status}`;
-          const geminiData = await geminiRes.json();
-
-          if (geminiData?.candidates?.[0]?.content?.parts?.[0]?.text) {
-            aiReply = geminiData.candidates[0].content.parts[0].text;
-            geminiStatus += " - Success";
-          } else if (geminiData?.error) {
-            geminiStatus += ` - Error: ${geminiData.error.message}`;
-            aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}". حابب تضيف مشروب كينزا مع الطلب؟`;
+          } catch (e: any) {
+            geminiStatus = `Exception ${model}: ${e.message}`;
           }
-        } catch (e: any) {
-          console.error("Gemini Error:", e);
-          geminiStatus = `Gemini Exception: ${e.message}`;
-          aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}".`;
+        }
+
+        if (!success) {
+          aiReply = `تكرم عينك أخي! سجّلت طلبك: "${userSpeech}". حابب تضيف كينزا أو صحن بطاطا مع الطلب؟`;
         }
       } else {
-        geminiStatus = "Missing Key";
-        aiReply = `تكرم عينك يا غالي! سجّلت طلبك: "${userSpeech}".`;
+        geminiStatus = "Missing GEMINI_API_KEY";
+        aiReply = `تكرم عينك! سجّلت طلبك: "${userSpeech}".`;
       }
     }
 
